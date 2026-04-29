@@ -1,23 +1,9 @@
-/**
- * POST /api/generate-trip
- *
- * Flow:
- * 1. Validate request body
- * 2. Determine best destination(s) for the params
- * 3. Fetch real data from all providers in parallel (aggregator)
- * 4. Pass data bundle to Anthropic — AI formats + ranks, never invents
- * 5. Return GeneratedTrip
- *
- * API keys never leave the server.
- */
-
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { fetchProviderBundle, getDestinationsForTypes } from "@/lib/services/aggregator";
 import { generateTrip } from "@/lib/services/anthropic";
 import type { ApiResponse, GeneratedTrip, TripSearchParams } from "@/types";
 
-// ── Input validation ──────────────────────────────────────────────────────────
 const schema = z.object({
   origin: z.string().length(3).toUpperCase(),
   budget: z.number().min(100).max(10000),
@@ -27,10 +13,14 @@ const schema = z.object({
   travelTypes: z.array(z.string()).min(1),
   needsAccommodation: z.boolean().default(true),
   needsTransport: z.boolean().default(true),
-  destination: z.string().optional(), // override: client can specify
+  destination: z.string().optional(),
 });
 
 export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse<GeneratedTrip>>> {
+  // DEBUG: log env var presence (never logs the value)
+  console.log("[generate-trip] ANTHROPIC_API_KEY present:", !!process.env.ANTHROPIC_API_KEY);
+  console.log("[generate-trip] key prefix:", process.env.ANTHROPIC_API_KEY?.slice(0, 10));
+
   let body: unknown;
   try {
     body = await req.json();
@@ -47,8 +37,6 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse<G
   }
 
   const params: TripSearchParams = parsed.data;
-
-  // Pick destination: either explicit or best match for travel types
   const candidateDestinations = parsed.data.destination
     ? [parsed.data.destination]
     : getDestinationsForTypes(params.travelTypes);
@@ -60,24 +48,14 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse<G
     );
   }
 
-  // Pick first matching destination (future: run all in parallel and let AI rank)
   const destinationName = candidateDestinations[0];
 
   try {
     const bundle = await fetchProviderBundle(params, destinationName);
 
-    // If all providers failed and we have nothing real, abort rather than hallucinate
-    if (
-      bundle.flights.length === 0 &&
-      bundle.hotels.length === 0 &&
-      bundle.experiences.length === 0
-    ) {
+    if (bundle.flights.length === 0 && bundle.hotels.length === 0 && bundle.experiences.length === 0) {
       return NextResponse.json(
-        {
-          ok: false,
-          error: "All data providers returned no results. Cannot generate trip without real data.",
-          code: "PROVIDER_UNAVAILABLE",
-        },
+        { ok: false, error: "All data providers returned no results.", code: "PROVIDER_UNAVAILABLE" },
         { status: 503 }
       );
     }
@@ -85,9 +63,11 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse<G
     const trip = await generateTrip(params, bundle, destinationName);
     return NextResponse.json({ ok: true, data: trip });
   } catch (err) {
-    console.error("[generate-trip]", err);
+    const message = err instanceof Error ? err.message : String(err);
+    console.error("[generate-trip] error:", message);
+    // In debug mode return the real error message
     return NextResponse.json(
-      { ok: false, error: "Trip generation failed. Please try again.", code: "AI_ERROR" },
+      { ok: false, error: message, code: "AI_ERROR" },
       { status: 500 }
     );
   }

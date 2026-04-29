@@ -5,7 +5,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getDestinationsForTypes } from "@/lib/services/aggregator";
+const meta = { city: name, country: "", travelTypes: [] as string[] };
 import type { ApiResponse } from "@/types";
 
 interface DestinationSummary {

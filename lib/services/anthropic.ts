@@ -46,10 +46,16 @@ export async function generateTrip(
 
   const raw = (message.content[0] as { type: string; text: string }).text;
 
+  // Strip markdown code fences if present (```json ... ``` or ``` ... ```)
+  const cleaned = raw
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```\s*$/, "")
+    .trim();
+
   try {
-    return JSON.parse(raw) as GeneratedTrip;
+    return JSON.parse(cleaned) as GeneratedTrip;
   } catch {
-    throw new Error(`AI returned invalid JSON: ${raw.slice(0, 200)}`);
+    throw new Error(`AI returned invalid JSON: ${cleaned.slice(0, 200)}`);
   }
 }
 

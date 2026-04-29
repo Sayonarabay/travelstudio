@@ -14,7 +14,7 @@
     "react-dom": "19.2.4",
     "@anthropic-ai/sdk": "^0.39.0",
     "zod": "^3.24.0",
-    "lucide-react": "^0.511.0",
+    "lucide-react": "^0.383.0",
     "clsx": "^2.1.0"
   },
   "devDependencies": {

@@ -1,120 +1,62 @@
-/**
- * Anthropic Trip Generation Service
- *
- * The AI layer ONLY operates on real provider data from the aggregator.
- * It ranks, formats, and personalises — it never invents prices,
- * places, or availability. If data is absent it says so explicitly.
- *
- * Anti-hallucination rules are embedded in the system prompt.
- */
-
 import Anthropic from "@anthropic-ai/sdk";
-import type { ProviderBundle, TripSearchParams, GeneratedTrip, RawFlight, RawHotel, RawExperience } from "@/types";
+import type { ProviderBundle, TripSearchParams, GeneratedTrip } from "@/types";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-const SYSTEM_PROMPT = `You are a travel itinerary engine. Your job is to format, rank, and personalise trip data.
-
-CRITICAL RULES — violating these is a production bug:
-1. You NEVER invent prices, places, hotel names, or airline names.
-2. You ONLY use data from the JSON bundle provided in the user message.
-3. If a field is missing from the bundle, set it to null or "data unavailable" — never guess.
-4. The priceIsEstimate field must be true if ANY price came from a source tagged "simulated".
-5. Return ONLY valid JSON that matches the GeneratedTrip schema. No markdown, no prose outside JSON.
-
-Your role: select the best flight/hotel/experiences from the bundle, write editorial copy (tagline, description, aiReasoning, tip texts), build the itinerary using real experience titles and times, and calculate honest totals.`;
+const SYSTEM_PROMPT = `You are a travel itinerary engine. Return ONLY valid JSON — no markdown, no backticks, no prose.
+RULES:
+1. Never invent prices, places, or hotels — use only data provided.
+2. If data is missing set to null, never guess.
+3. priceIsEstimate=true if any source="simulated".`;
 
 export async function generateTrip(
   params: TripSearchParams,
   bundle: ProviderBundle,
   destinationName: string
 ): Promise<GeneratedTrip> {
-  const hasSimulated = [
-    ...bundle.flights,
-    ...bundle.hotels,
-    ...bundle.experiences,
-  ].some((item) => item.source === "simulated");
+  const hasSimulated = [...bundle.flights, ...bundle.hotels, ...bundle.experiences]
+    .some((item) => item.source === "simulated");
 
-  const userPrompt = buildPrompt(params, bundle, destinationName, hasSimulated);
+  // Slim bundle — only essential fields to minimize token cost
+  const slim = {
+    flights: bundle.flights.slice(0, 2).map(f => ({
+      id: f.id, airline: f.airline, stops: f.stops,
+      durationMin: f.durationMinutes, price: f.priceEur, source: f.source,
+      dep: f.departureAt, arr: f.arrivalAt, origin: f.origin, dest: f.destination,
+    })),
+    hotels: bundle.hotels.slice(0, 3).map(h => ({
+      id: h.id, name: h.name, stars: h.starRating, score: h.reviewScore,
+      pricePerNight: h.pricePerNightEur, amenities: h.amenities.slice(0, 4),
+      city: h.city, country: h.country, source: h.source, link: h.deepLink,
+    })),
+    experiences: bundle.experiences.slice(0, 4).map(e => ({
+      id: e.id, title: e.title, price: e.priceEur,
+      hours: e.durationHours, category: e.category, source: e.source,
+      desc: e.description, img: e.imageUrl, link: e.deepLink,
+    })),
+    gaps: bundle.dataGaps,
+  };
+
+  const userPrompt = `Trip to ${destinationName}.
+budget=${params.budget}€ days=${params.days} origin=${params.origin} types=${params.travelTypes.join(",")} simulated=${hasSimulated}
+DATA:${JSON.stringify(slim)}
+
+Return JSON:
+{"destination":"...","country":"...","city":"...","tagline":"...","description":"...","categories":[...],"heroImageUnsplashQuery":"...","totalPriceEur":0,"priceBreakdown":{"flights":0,"accommodation":0,"experiences":0},"priceIsEstimate":true,"selectedFlight":null,"selectedHotel":null,"recommendedExperiences":[],"itinerary":[{"day":1,"title":"...","items":[{"time":"09:00","type":"suggested","title":"...","description":"...","priceEur":null,"sourceId":null}]}],"tips":[{"icon":"🗺","title":"...","body":"..."}],"aiReasoning":"...","generatedAt":"${new Date().toISOString()}"}`;
 
   const message = await client.messages.create({
-    model: "claude-sonnet-4-20250514",
-    max_tokens: 2000,
+    model: "claude-haiku-4-5-20251001",
+    max_tokens: 1500,
     system: SYSTEM_PROMPT,
     messages: [{ role: "user", content: userPrompt }],
   });
 
   const raw = (message.content[0] as { type: string; text: string }).text;
-
-  // Strip markdown code fences if present (```json ... ``` or ``` ... ```)
-  const cleaned = raw
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```\s*$/, "")
-    .trim();
+  const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
 
   try {
     return JSON.parse(cleaned) as GeneratedTrip;
   } catch {
     throw new Error(`AI returned invalid JSON: ${cleaned.slice(0, 200)}`);
   }
-}
-
-function buildPrompt(
-  params: TripSearchParams,
-  bundle: ProviderBundle,
-  destination: string,
-  hasSimulated: boolean
-): string {
-  return `Generate a trip to ${destination} based ONLY on the data below.
-
-SEARCH PARAMS:
-${JSON.stringify(params, null, 2)}
-
-PROVIDER DATA (use only this):
-${JSON.stringify(bundle, null, 2)}
-
-HAS_SIMULATED_DATA: ${hasSimulated}
-DATA_GAPS: ${bundle.dataGaps.join(", ") || "none"}
-
-Return a single JSON object matching this TypeScript type exactly:
-
-{
-  destination: string,
-  country: string,
-  city: string,
-  tagline: string,             // 1 punchy line, editorial tone
-  description: string,         // 2-3 sentences, editorial
-  categories: string[],        // from travelTypes
-  heroImageUnsplashQuery: string, // e.g. "Tokyo Japan night skyline"
-
-  totalPriceEur: number,       // sum of selected items, never invented
-  priceBreakdown: { flights: number, accommodation: number, experiences: number },
-  priceIsEstimate: boolean,    // true if ANY source is "simulated"
-
-  selectedFlight: RawFlight | null,   // pick best value from bundle.flights
-  selectedHotel: RawHotel | null,     // pick best fit from bundle.hotels
-  recommendedExperiences: RawExperience[], // top 3 from bundle.experiences
-
-  itinerary: Array<{
-    day: number,
-    title: string,
-    items: Array<{
-      time: string,           // e.g. "09:00"
-      type: "included" | "suggested" | "transport" | "meal",
-      title: string,          // MUST match a real experience title or generic activity
-      description: string,
-      priceEur: number | null,
-      sourceId: string | null  // experience id if sourced from bundle
-    }>
-  }>,
-
-  tips: Array<{ icon: string, title: string, body: string }>,  // 3 practical tips
-
-  aiReasoning: string,         // 1-2 sentences: why this trip matches the request
-  generatedAt: string          // ISO timestamp
-}
-
-If bundle.flights is empty, set selectedFlight to null and set priceIsEstimate to true.
-If bundle.hotels is empty, set selectedHotel to null and set priceIsEstimate to true.
-The generatedAt field must equal "${new Date().toISOString()}".`;
 }

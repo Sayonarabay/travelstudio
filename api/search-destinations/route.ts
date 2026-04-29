@@ -5,7 +5,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getDestinationsForTypes, getDestinationMeta } from "@/lib/services/aggregator";
+import { getDestinationsForTypes } from "@/lib/services/aggregator";
 import type { ApiResponse } from "@/types";
 
 interface DestinationSummary {

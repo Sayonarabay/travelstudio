@@ -1,0 +1,4 @@
+cat > /home/claude/ts2/.nvmrc << 'EOF'
+20
+EOF
+echo ok

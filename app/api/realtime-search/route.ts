@@ -1,10 +1,8 @@
 /**
  * POST /api/realtime-search
  *
- * Uses Claude with web_search tool to fetch real-time destination data:
- * prices, climate, events, travel alerts.
- *
- * API key stays server-side. Never exposed to client.
+ * Uses Claude with web_search tool to fetch real-time destination data.
+ * API key stays server-side only.
  */
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -55,27 +53,26 @@ export async function POST(req: NextRequest) {
 4) Alertas de viaje o requisitos de entrada actuales`;
 
   try {
-    const response = await client.messages.create({
+    // Use `as any` on the entire params object to bypass SDK type mismatch
+    // for web_search_20250305 tool (supported by API, not yet typed in SDK)
+    const params = {
       model: "claude-sonnet-4-20250514",
       max_tokens: 1000,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      tools: [
-        {
-          type: "web_search_20250305",
-          name: "web_search",
-        },
-      ],
+      tools: [{ type: "web_search_20250305", name: "web_search" }],
       system: `Eres un asistente de viajes que busca información real y actualizada.
 Responde SOLO con un JSON válido con esta estructura exacta (sin markdown):
 {
   "summary": "resumen breve en 1-2 frases",
   "dataPoints": [
-    { "category": "precio|clima|eventos|alertas|general", "label": "...", "value": "...", "source": "URL o nombre fuente (opcional)" }
+    { "category": "precio|clima|eventos|alertas|general", "label": "...", "value": "...", "source": "fuente (opcional)" }
   ]
 }
 Incluye entre 4 y 8 dataPoints concretos y verificados. No inventes datos.`,
       messages: [{ role: "user", content: userQuery }],
-    });
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const response = await client.messages.create(params as any);
 
     const usedWebSearch = response.content.some(
       (block) => block.type === "tool_use" && (block as { name: string }).name === "web_search"

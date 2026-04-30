@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { Spinner, Badge, EstimateFlag } from "@/components/ui/index";
-import { formatEur, formatDuration, formatDate, unsplashUrl } from "@/lib/utils";
+import { formatEur, formatDuration, unsplashUrl } from "@/lib/utils";
+import { RealtimePanel } from "@/components/trip/RealtimePanel";
 import type { GeneratedTrip, ApiResponse } from "@/types";
 
 export default function TripPage() {
@@ -107,6 +108,9 @@ export default function TripPage() {
           </div>
         ))}
       </div>
+
+      {/* Real-time data panel */}
+      <RealtimePanel destination={trip.destination} />
 
       {/* Selected flight */}
       {trip.selectedFlight ? (
